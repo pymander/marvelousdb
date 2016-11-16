@@ -1,84 +1,165 @@
-var db = require('orchestrate')(process.env.ORCHESTRATE_API_KEY);
+var config = require('./config.js');
+var mongodbUrl = 'mongodb://' + config.mongodbHost + ':27017/marvel';
+var MongoClient = require('mongodb').MongoClient
 var Q = require('q');
+
+var FIELDS_TO_SEARCH = [
+  'name',
+  'wiki.real_name',
+  'wiki.alias',
+  'description',
+  'wiki.occupation',
+  'wiki.place_of_birth',
+  'wiki.groups',
+  'wiki.relatives',
+  'wiki.hair',
+  'wiki.powers',
+  'wiki.abilities'
+];
 
 // GET A SINGLE CHARACTER
 // passed in the character ID and optional pagination page
-exports.getCharacter = function (id, page) {
+exports.getCharacter = function (charId, page) {
   var out = {};
   var comicResults;
+  var deferred = Q.defer();
 
-  // Get the character data
-  var character = db.get('characters', id)
-      .then(function(results){
-	out = results.body;
-	cleanUpCharacterData(out);
+  // Normalize stuff.
+  charId = parseInt(charId);
+  page = parseInt(page) || 1;
+
+  MongoClient.connect(mongodbUrl, function (err, db) {
+    var charDefer = Q.defer();
+    var comicDefer = Q.defer();
+    var collection = db.collection('characters');
+
+    collection.findOne({'id' : charId})
+      .catch(function (error) {
+        console.log("ERROR", error);
+      })
+      .then(function (character) {
+        var comicIds = [];
+
+        console.log("FOUND", character.name);
+        out = character;
+
+        // Collect comic IDs
+        character.comics.items.forEach(function (item) {
+          if (0 < item.id) {
+            comicIds.push(item.id);
+          }
+        });
+
+        if (0 < comicIds.length) {
+          var skipCount = (page - 1) * 20;
+
+          // Search MongoDB comics collection
+          db.collection('comics').find({'id': {'$in': comicIds}})
+            .sort({'id': 1})
+            .skip(skipCount)
+            .toArray(function (err, docs) {
+
+              if (null != err) {
+                comicDefer.reject(err);
+              }
+              else {
+                comicDefer.resolve(docs);
+              }
+            });
+        }
+        else {
+          console.log("No comics to find");
+
+          comicDefer.resolve([]);
+        };
+
+        return comicDefer.promise;
+      })
+      .then(function (comics) {
+        out.comics = comics;
+
+        deferred.resolve(out);
+
+        db.close()
       });
+  });
 
-  // get the comics for this character
-  var comics = getComicsByCharacter(id, page)
-      .then(function (results) {
-	comicResults = results;
-      });
-
-  // join the results and return them
-  return Q.all([ character, comics ])
-    .then(function () {
-      out.comics = comicResults;
-      return out;
-    });
-
+  return deferred.promise;
 }
 
-
 // SEARCH CHARACTERS
+// This converts query parameters into a MongoDB search.
 exports.getCharacters = function (options) {
   var options = options || {};
+  var builtSearch = {};
+  var deferred = Q.defer();
 
-  // if no term is specified, get everything
-  if (!options.query) options.query = '*';
-
-  // Build search query
-  var queries = [];
-
+  // Normalize options.
+  options.offset = parseInt(options.offset) || 0;
+  
   if (options.field) {
+    // For a real name, we search both 'wiki.real_name' and 'wiki.alias'
     if (options.field == 'wiki.real_name') {
-      queries.push( '(value.wiki.real_name: ' + options.query + ' OR value.wiki.aliases:' + options.query + ')' );
+      builtSearch['$or'] = [
+        { 'wiki.real_name' : { '$regex' : options.query,
+                               '$options' : 'i' } },
+        { 'wiki.alias'     : { '$regex' : options.query,
+                               '$options' : 'i' } }
+      ];
     }
     else {
-      queries.push( 'value.' + options.field + ': ' + options.query );
+      builtSearch[options.field] = {
+        '$regex' : options.query,
+        '$options' : 'i'
+      };
     }
   } else {
-    queries.push( options.query );
+    builtSearch['$or'] = [];
+    
+    // This builds a MongoDB search query across all fields.
+    FIELDS_TO_SEARCH.forEach(function (fieldName) {
+      var queryObj = {};
+
+      queryObj[fieldName] = { "$regex"   : options.query,
+                              "$options" : 'i' };
+        
+      builtSearch['$or'].push(queryObj);
+    });
   }
 
   if (options.gender) {
-    queries.push( 'value.gender: "' + options.gender + '"' );
+    builtSearch['gender'] = options.gender;
   }
 
   if (options.reality) {
-    queries.push( 'value.wiki.universe: ' + options.reality + '' );
+    builtSearch['wiki.universe'] = options.reality;
   }
 
+  console.log("SEARCH characters", JSON.stringify(builtSearch));
+  
+  // Execute the MongoDB search
+  MongoClient.connect(mongodbUrl, function (err, db) {
+    var collection = db.collection('characters');
 
-  return db.newSearchBuilder()
-    .collection('characters')
-    .limit(options.limit || 50)
-    .offset(options.offset || 0)
-    .query(queries.join(' AND '))
-    .then(function(response){
-      response.body.results.forEach(function (item) {
-	cleanUpCharacterData(item.value);
+    collection.find(builtSearch)
+      .sort({ "name": 1 })
+      .skip(options.offset)
+      .toArray(function (err, docs) {
+        if (null != err) {
+          deferred.reject(err);
+        }
+        else {
+          console.log("SEARCH found", docs.length);
+          
+          deferred.resolve(docs);
+        }
+            
+        db.close();
       });
+  });
 
-      return response;
-    });
+  return deferred.promise;
 }
-
-
-
-
-
-
 
 // SEARCH ALL COMICS
 exports.getComics = function (options) {

@@ -184,18 +184,16 @@
 </div>
 {{/with}}
 
-{{#if data.comics.results}}
+{{#if data.comics}}
 <div class="other-comics" id="other-comics">
    <h2>{{data.name}} Appears In</h2>
    <hr>
    <ul class="comic-list">
-      {{#each data.comics.results}}
+      {{#each data.comics}}
          <li class="list-group-item">
-            <a href="/comic/{{path.key}}" title="">
-            {{#with this.value}}
+            <a href="/comic/{{id}}" title="">
                <img src="{{thumbnail.path}}.{{thumbnail.extension}}" alt="">
                <p class="title">{{title}}</p>
-            {{/with}}
             </a>
          </li>
       {{/each}}
