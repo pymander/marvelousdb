@@ -4,12 +4,15 @@
   "description": "Explore the Marvel Universe with MongoDB and CenturyLink Cloud",
   "main": "web.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node web.js"
   },
   "dependencies": {
     "express": "^4.14.0",
     "express-handlebars": "^3.0.0",
     "handlebars-paginate": "^0.1.0",
+    "mongodb": "^2.2.11",
+    "morgan": "^1.7.0",
     "q": "^1.0.1"
   },
   "repository": {
