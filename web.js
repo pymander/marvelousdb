@@ -54,6 +54,7 @@ app.get('/characters/search', function(request, response) {
   })
     .then(function (data) {
       var pages = Math.ceil(data.length / limit);
+      data = data.slice(0, limit);
 
       // kill the page object before we serialize the qs
       delete request.query.p;
@@ -90,7 +91,8 @@ app.get('/comics/search', function(request, response) {
     field: field
   })
     .then(function (data) {
-      var pages = Math.ceil(data.body.total_count / limit);
+      var pages = Math.ceil(data.length / limit);
+      data = data.slice(0, limit);
 
       // kill the page object before we serialize the qs
       delete request.query.p;
@@ -101,7 +103,7 @@ app.get('/comics/search', function(request, response) {
 	  pageCount: pages,
 	  qs: querystring.stringify(request.query)
 	},
-	data: data.body
+	data: data
       });
     })
     .fail(function(error){
