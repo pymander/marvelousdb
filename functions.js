@@ -164,42 +164,86 @@ exports.getComics = function (options) {
 exports.getComic = function (id) {
   var out = {};
   var characterResults;
+  var topDeferred = Q.defer();
+  id = parseInt(id);
+  
+  MongoClient.connect(mongodbUrl, function (err, db) {
+    var collection = db.collection('comics');
+    var out = {};
 
-  // Get the character data
-  var comic = db.get('comics', id)
-      .then(function(results){
-	out = results.body;
+    // First retrieve comics data.
+    return collection.findOne({'id' : id})
+      .then(function (out) {
+        var deferred = Q.defer();
 
-	// split the title into title and subtitle
-	var temp = out.title.search(/(:|\()/mi);
+        console.log("COMIC", id, out.title);
+        
+        // split the title into title and subtitle
+        var temp = out.title.search(/(:|\()/mi);
 
-	// keep the paranthasis but not the colon
-	var skipChar = (out.title.indexOf(':') >= 0) ? 1:0;
+        // keep the paranthasis but not the colon
+        var skipChar = (out.title.indexOf(':') >= 0) ? 1:0;
 
-	if (temp >= 0) {
+        if (temp >= 0) {
 	  out.subtitle = out.title.substring(temp+skipChar);
 	  out.title = out.title.substring(0, temp);
-	}
+        }
 
-	// replace and <br> or \r characters
-	if (out.description) out.description = out.description.trim().replace(/(<br>|\r)/gmi, '\n').trim();
-      });
+        // replace and <br> or \r characters
+        if (out.description)
+          out.description = out.description.trim().replace(/(<br>|\r)/gmi, '\n').trim();
 
-  // get the comics for this character
-  var characters = getCharactersByComic(id)
-      .then(function (results) {
-	characterResults = results.body.results;
-      });
+        deferred.resolve(out);
 
-  // join the results and return them
-  return Q.all([ comic, characters ])
-    .then(function () {
-      out.characters = characterResults;
-      return out;
-    });
+        return deferred.promise;
+      })
+      .then(function (comic) {
+        // Retrieve the characters for this comic.
+        var deferred = Q.defer();
+        out = comic;
 
+        // Collect character IDs.
+        var characterIds = [];
+        comic.characters.items.forEach(function (item) {
+          var charId = parseInt(item.resourceURI.split('/').pop());
+
+          if (0 < charId) {
+            characterIds.push(charId);
+          }
+        });
+
+        console.log("COMIC character IDs", JSON.stringify(characterIds));
+
+        db.collection('characters').find({'id': {'$in': characterIds}})
+          .sort({'name': 1})
+          .toArray(function (err, docs) {
+            if (null != err) {
+              deferred.reject(err);
+            }
+            else {
+              deferred.resolve(docs);
+            }
+          });
+
+        return deferred.promise;
+      })
+      .then(function (characters) {
+        out.characters = characters;
+
+        topDeferred.resolve(out);
+
+        db.close();
+
+        return topDeferred.promise;
+      })
+      .catch(function (err) {
+        console.log("ERR", err);
+      })
+
+  });
+
+  return topDeferred.promise;
 }
-
 
 // GET COMICS BY CHARACTER ID
 // passed in Character ID and optional pagination page

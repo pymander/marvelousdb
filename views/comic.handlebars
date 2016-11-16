@@ -5,7 +5,6 @@
    <div class="characters-section">
        <ul>
          {{#each characters}}
-            {{#with this.value}}
             <li>
                <a href="/character/{{id}}" title="{{name}}">
                   <div class="image">
@@ -14,7 +13,6 @@
                   <p>{{name}}</p>
                </a>
             </li>
-            {{/with}}
          {{/each}}
       </ul>
    </div>
