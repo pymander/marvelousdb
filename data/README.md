@@ -1,23 +1,6 @@
-First, add your API key.
+To import the data into a MongoDB server, follow these steps.
 
-Then run:
+1. Copy the entire **data** directory onto the server hosting MongoDB.
+2. Run `sh import.sh`
 
-```
-node import.js
-```
-
-This will add the comics and characters to the DB.
-
-Next, comment out these lines:
-
-```
-addComics();
-addCharacters();
-```
-And uncomment :
-
-```
-appearsIn();
-```
-
-This will create the graph connections between the characters and the comics.
+The process will take a while. It's a lot of data to import.
