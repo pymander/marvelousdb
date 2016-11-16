@@ -36,58 +36,25 @@ exports.getCharacter = function (charId, page) {
   page = parseInt(page) || 1;
 
   MongoClient.connect(mongodbUrl, function (err, db) {
-    var charDefer = Q.defer();
-    var comicDefer = Q.defer();
     var collection = db.collection('characters');
 
     collection.findOne({'id' : charId})
-      .catch(function (error) {
-        console.log("ERROR", error);
-      })
       .then(function (character) {
-        var comicIds = [];
-
         console.log("FOUND", character.name);
         out = character;
 
-        // Collect comic IDs
-        character.comics.items.forEach(function (item) {
-          if (0 < item.id) {
-            comicIds.push(item.id);
-          }
-        });
-
-        if (0 < comicIds.length) {
-          var skipCount = (page - 1) * 20;
-
-          // Search MongoDB comics collection
-          db.collection('comics').find({'id': {'$in': comicIds}})
-            .sort({'id': 1})
-            .skip(skipCount)
-            .toArray(function (err, docs) {
-
-              if (null != err) {
-                comicDefer.reject(err);
-              }
-              else {
-                comicDefer.resolve(docs);
-              }
-            });
-        }
-        else {
-          console.log("No comics to find");
-
-          comicDefer.resolve([]);
-        };
-
-        return comicDefer.promise;
+        return getComicsByCharacter(db, character, (page - 1) * 20)
       })
       .then(function (comics) {
+        cleanUpCharacterData(out);
         out.comics = comics;
 
         deferred.resolve(out);
 
         db.close()
+      })
+      .catch(function (error) {
+        console.log("ERROR", error);
       });
   });
 
@@ -199,33 +166,9 @@ exports.getComic = function (id) {
       })
       .then(function (comic) {
         // Retrieve the characters for this comic.
-        var deferred = Q.defer();
         out = comic;
 
-        // Collect character IDs.
-        var characterIds = [];
-        comic.characters.items.forEach(function (item) {
-          var charId = parseInt(item.resourceURI.split('/').pop());
-
-          if (0 < charId) {
-            characterIds.push(charId);
-          }
-        });
-
-        console.log("COMIC character IDs", JSON.stringify(characterIds));
-
-        db.collection('characters').find({'id': {'$in': characterIds}})
-          .sort({'name': 1})
-          .toArray(function (err, docs) {
-            if (null != err) {
-              deferred.reject(err);
-            }
-            else {
-              deferred.resolve(docs);
-            }
-          });
-
-        return deferred.promise;
+        return getCharactersByComic(db, comic);
       })
       .then(function (characters) {
         out.characters = characters;
@@ -246,38 +189,75 @@ exports.getComic = function (id) {
 }
 
 // GET COMICS BY CHARACTER ID
-// passed in Character ID and optional pagination page
-//
-// right now Orchestrate doesn't support limits and pagination
-// in the graph results so we will get them all and limit the results
-function getComicsByCharacter (id, offset, limit) {
-  var limit = limit || 20;
-  var end = offset + limit;
+// passed in Character object and optional pagination page
+function getComicsByCharacter (db, character, offset, limit) {
+  var deferred = Q.defer();
+  var comicIds = [];
+  offset = offset || 0;
+  limit = limit || 20;
+  
+  // Collect comic IDs
+  character.comics.items.forEach(function (item) {
+    if (0 < item.id) {
+      comicIds.push(item.id);
+    }
+  });
 
-  console.log(id, offset, end, limit);
+  if (0 < comicIds.length) {
+    // Search MongoDB comics collection
+    db.collection('comics').find({'id': {'$in': comicIds}})
+      .sort({'id': 1})
+      .skip(offset)
+      .toArray(function (err, docs) {
+        if (null != err) {
+          deferred.reject(err);
+        }
+        else {
+          deferred.resolve(docs.slice(0, limit));
+        }
+      });
+  }
+  else {
+    deferred.resolve([]);
+  };
 
-  return db.newGraphReader()
-    .get()
-    .from('characters', id)
-    .related('in')
-    .then(function (results) {
-      // limit it to a max number of results
-      return {
-	total: results.body.results.length,
-	results: results.body.results.slice(offset, end)
-      };
-    });
+  return deferred.promise;
 }
 
 // FIND ALL CHARACTER THAT APPEAR IN A COMIC
-function getCharactersByComic (id) {
-  return db.newGraphReader()
-    .get()
-    .from('comics', id)
-    .related('characters');
+function getCharactersByComic (db, comic) {
+  var deferred = Q.defer();
+
+  // Collect character IDs.
+  var characterIds = [];
+  comic.characters.items.forEach(function (item) {
+    var charId = parseInt(item.resourceURI.split('/').pop());
+
+    if (0 < charId) {
+      characterIds.push(charId);
+    }
+  });
+
+  console.log("COMIC character IDs", JSON.stringify(characterIds));
+
+  if (0 == characterIds.length) {
+    deferred.resolve([]);
+  }
+  else {
+    db.collection('characters').find({'id': {'$in': characterIds}})
+      .sort({'name': 1})
+      .toArray(function (err, docs) {
+        if (null != err) {
+          deferred.reject(err);
+        }
+        else {
+          deferred.resolve(docs);
+        }
+      });
+  }
+  
+  return deferred.promise;
 }
-
-
 
 // breaks the character name onto two lines for display
 function cleanUpCharacterData (out) {
