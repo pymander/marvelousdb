@@ -3,27 +3,6 @@ var mongodbUrl = 'mongodb://' + config.mongodbHost + ':27017/marvel';
 var MongoClient = require('mongodb').MongoClient
 var Q = require('q');
 
-var FIELDS_TO_SEARCH = [
-  'name',
-  'wiki.real_name',
-  'wiki.alias',
-  'description',
-  'wiki.occupation',
-  'wiki.place_of_birth',
-  'wiki.groups',
-  'wiki.relatives',
-  'wiki.hair',
-  'wiki.powers',
-  'wiki.abilities'
-];
-
-var COMICS_FIELDS_TO_SEARCH = [
-  'title',
-  'issueNumber',
-  'description',
-  'creators'
-];
-
 // GET A SINGLE CHARACTER
 // passed in the character ID and optional pagination page
 exports.getCharacter = function (charId, page) {
@@ -67,6 +46,8 @@ exports.getCharacters = function (options) {
   var options = options || {};
   var builtSearch = {};
   var deferred = Q.defer();
+  var defaultSort = { 'name' : 1 };
+  var projectFields = null;
 
   // Normalize options.
   options.offset = parseInt(options.offset) || 0;
@@ -88,8 +69,10 @@ exports.getCharacters = function (options) {
       };
     }
   } else {
-    // This builds a MongoDB search query across all fields.
-    builtSearch['$or'] = buildMultiFieldSearch(options.query, FIELDS_TO_SEARCH);
+    // This builds a MongoDB full text search using the text index.
+    builtSearch['$text'] = { '$search' : options.query };
+    projectFields = { 'score': {'$meta': "textScore"} };
+    defaultSort = {'score': {'$meta':"textScore"}};
   }
 
   if (options.gender) {
@@ -102,29 +85,34 @@ exports.getCharacters = function (options) {
 
   console.log("SEARCH characters", JSON.stringify(builtSearch));
   
-  return searchCollection ('characters', builtSearch, options.offset, {name: 1});
+  return searchCollection ('characters', builtSearch, options.offset, defaultSort, projectFields);
 }
 
 // SEARCH ALL COMICS
 exports.getComics = function (options) {
   var options = options || {};
-  var builtQuery = {};
+  var builtSearch = {};
+  var defaultSort = {title: 1, issueNumber: 1};
+  var projectFields = null;
 
   // if no term is specified, get everything
   if (!options.query) options.query = '.*';
 
   if (options.field) {
-    builtQuery[options.field] = {
+    builtSearch[options.field] = {
       '$regex' : options.query,
       '$options' : 'i'
     };
   } else {
-    builtQuery['$or'] = buildMultiFieldSearch(options.query, COMICS_FIELDS_TO_SEARCH);
+    // This builds a MongoDB full text search using the text index.
+    builtSearch['$text'] = { '$search' : options.query };
+    projectFields = { 'score': {'$meta': "textScore"} };
+    defaultSort = {'score': {'$meta':"textScore"}};
   }
 
-  console.log("COMICS query", JSON.stringify(builtQuery));
+  console.log("COMICS query", JSON.stringify(builtSearch));
 
-  return searchCollection ('comics', builtQuery, options.offset, {title: 1, issueNumber: 1})
+  return searchCollection ('comics', builtSearch, options.offset, defaultSort, projectFields)
 }
 
 // GET SINGLE COMIC
@@ -189,7 +177,7 @@ exports.getComic = function (id) {
 }
 
 // GET COMICS BY CHARACTER ID
-// passed in Character object and optional pagination page
+// passed in the MongoDB database, Character object and optional pagination page
 function getComicsByCharacter (db, character, offset, limit) {
   var deferred = Q.defer();
   var comicIds = [];
@@ -285,22 +273,7 @@ function cleanUpComicData (out) {
   }
 }
 
-function buildMultiFieldSearch (query, fieldArray) {
-  var searchArray = [];
-
-  fieldArray.forEach(function (fieldName) {
-    var queryObj = {};
-
-    queryObj[fieldName] = { "$regex"   : query,
-                            "$options" : 'i' };
-        
-    searchArray.push(queryObj);
-  });
-
-  return searchArray;
-}
-
-function searchCollection (collectionName, query, offset, sortCriteria) {
+function searchCollection (collectionName, query, offset, sortCriteria, project) {
   var deferred = Q.defer();
   offset = offset || 0;
   
@@ -308,8 +281,13 @@ function searchCollection (collectionName, query, offset, sortCriteria) {
   MongoClient.connect(mongodbUrl, function (err, db) {
     var collection = db.collection(collectionName);
 
-    collection.find(query)
-      .sort(sortCriteria)
+    var cursor = collection.find(query);
+
+    if (null != project) {
+      cursor = cursor.project(project);
+    }
+
+    cursor.sort(sortCriteria)
       .skip(offset)
       .toArray(function (err, docs) {
         if (null != err) {
